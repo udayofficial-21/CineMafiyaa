@@ -12,6 +12,13 @@ from contextlib import asynccontextmanager
 from pyrogram import Client, filters, enums
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberUpdated
 from pyrogram.errors import FloodWait, UserNotParticipant
+
+# Pyrogram 2.0.x ships bounds that reject newer Telegram channel IDs (channel_id > 2^31-1).
+# Without this, resolve_peer raises ValueError: Peer id invalid (see pyrogram PR #1430 / pyrofork).
+import pyrogram.utils as _pyrogram_utils
+
+_pyrogram_utils.MIN_CHANNEL_ID = -1007852516352
+_pyrogram_utils.MIN_CHAT_ID = -999999999999
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -270,10 +277,10 @@ async def cleanup_channel(c: Client):
 # --- FASTAPI WEB SERVER ---
 # =====================================================================================
  
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def health_check():
     """
-    This route provides a 200 OK response for uptime monitors.
+    GET/HEAD for uptime monitors (Render sends HEAD; HEAD alone used to return 405).
     """
     return {"status": "ok", "message": "Server is healthy and running!"}
 
@@ -294,8 +301,11 @@ async def get_file_details_api(request: Request, unique_id: str):
         raise HTTPException(status_code=503, detail="Bot is not ready.")
     try:
         message = await main_bot.get_messages(Config.STORAGE_CHANNEL, message_id)
-    except Exception:
-        raise HTTPException(status_code=404, detail="File not found on Telegram.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"get_file_details_api: {traceback.format_exc()}")
+        raise HTTPException(status_code=503, detail="Could not load file from Telegram. Try again shortly.")
     media = message.document or message.video or message.audio
     if not media:
         raise HTTPException(status_code=404, detail="Media not found in the message.")
